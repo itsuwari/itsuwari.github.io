@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Alfven wave simulation WASM Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div>
+        <div class="eyebrow">ttdl Eigen</div>
+        <h1>Alfven WASM Demo</h1>
+        <p class="sub">Low-rank gyrokinetic Alfvén-wave demo compiled to WebAssembly.</p>
+      </div>
+      <div class="status" id="status">Idle</div>
+    </header>
+
+    <section class="panel">
+      <div class="controls">
+        <div class="group">
+          <label>Grid (nx, ny, nz, nv)</label>
+          <div class="row">
+            <input id="nx" type="number" min="4" step="1" value="32" />
+            <input id="ny" type="number" min="4" step="1" value="32" />
+            <input id="nz" type="number" min="4" step="1" value="32" />
+            <input id="nv" type="number" min="8" step="1" value="128" />
+          </div>
+        </div>
+        <div class="group">
+          <label>Model (method, phi basis, discretization)</label>
+          <div class="row">
+            <select id="method">
+              <option value="strang_mrap" selected>strang_mrap</option>
+              <option value="parallel_bug">parallel_bug</option>
+              <option value="lie">lie</option>
+              <option value="strang">strang</option>
+              <option value="unconventional">unconventional</option>
+              <option value="augmented">augmented</option>
+              <option value="bug_midpoint">bug_midpoint</option>
+            </select>
+            <select id="discretization">
+              <option value="fft" selected>fft</option>
+              <option value="lw">lw</option>
+            </select>
+          </div>
+        </div>
+        <div class="group">
+          <label>Waves (kx, ky, kz)</label>
+          <div class="row">
+            <input id="kx" type="number" step="0.0001" value="0.1414" />
+            <input id="ky" type="number" step="0.0001" value="0.1414" />
+            <input id="kz" type="number" step="0.0001" value="6.2831" />
+          </div>
+        </div>
+        <div class="group">
+          <label>Rank</label>
+          <div class="row">
+            <input id="rank" type="number" min="1" step="1" value="2" />
+          </div>
+        </div>
+        <div class="group">
+          <label>Plasma (betaMe, rho_i)</label>
+          <div class="row">
+            <input id="betaMe" type="number" step="0.01" value="1.0" />
+            <input id="rhoI" type="number" step="0.01" value="2.0" />
+          </div>
+        </div>
+        <div class="group">
+          <label>Alpha</label>
+          <div class="row">
+            <input id="alpha" type="number" step="0.0001" value="0.1" />
+          </div>
+        </div>
+        <div class="group">
+          <label>Time (dt, steps, refresh steps)</label>
+          <div class="row">
+            <input id="dt" type="number" step="0.000001" value="0.00005" />
+            <input id="steps" type="number" min="1" step="1" value="200" />
+            <input id="refreshSteps" type="number" min="1" step="1" value="20" />
+            <button id="runBtn">Run</button>
+          </div>
+          <div class="hint" id="timeHint">tfinal = 1e-2, snapshots = 11, interval = 20 steps</div>
+        </div>
+        <div class="group">
+          <label>Diagnostics</label>
+          <div class="row small">
+            <div>Method: <span class="chip" id="chipMethod">strang_mrap</span></div>
+            <div>phi basis: <span class="chip" id="chipPhi">ensign</span></div>
+            <div>discr: <span class="chip" id="chipDiscr">fft</span></div>
+            <div>k: <span class="chip" id="chipK">0.141,0.141,6.283</span></div>
+            <div>betaMe: <span class="chip" id="chipBeta">4.0</span></div>
+            <div>rho_i: <span class="chip" id="chipRho">1.0</span></div>
+            <div>dt: <span class="chip" id="chipDt">1e-5</span></div>
+            <div>tfinal: <span class="chip" id="chipTfinal">8e-4</span></div>
+            <div>refresh: <span class="chip" id="chipRefresh">10 steps</span></div>
+            <div>slice: <span class="chip">f(z,v) @ x,y center</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric">
+          <div class="label">Total Runtime</div>
+          <div class="value" id="jsRuntime">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Runtime (C++)</div>
+          <div class="value" id="cppRuntime">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Frames (zv)</div>
+          <div class="value" id="frameCountZv">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Frames (xv)</div>
+          <div class="value" id="frameCountXv">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">JS Heap</div>
+          <div class="value" id="jsHeap">--</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="plot-grid">
+        <div class="plot" id="plotZv">
+          <div class="plot-header">
+            <div>
+              <h2>f(z, v)</h2>
+              <p class="sub">Snapshots in the z-v plane (use the slider to scrub time).</p>
+            </div>
+            <div class="plot-tools">
+              <select id="scaleZv">
+                <option value="per-frame">per-frame scale</option>
+                <option value="global" selected>global scale</option>
+                <option value="delta">delta vs first</option>
+              </select>
+              <select id="zoomZv">
+                <option value="auto" selected>auto-zoom</option>
+                <option value="full">full domain</option>
+              </select>
+              <div class="legend" id="legend">min -- / max --</div>
+            </div>
+          </div>
+          <canvas id="heatmap" width="480" height="360"></canvas>
+          <div class="frame-controls">
+            <input id="frameSlider" type="range" min="0" max="0" value="0" />
+            <div class="frame-label" id="frameLabel">frame 0 / 0</div>
+          </div>
+        </div>
+
+        <div class="plot" id="plotXv">
+          <div class="plot-header">
+            <div>
+              <h2>f(x, v)</h2>
+              <p class="sub">Snapshots in the x-v plane (use the slider to scrub time).</p>
+            </div>
+            <div class="plot-tools">
+              <select id="scaleXv">
+                <option value="per-frame">per-frame scale</option>
+                <option value="global" selected>global scale</option>
+                <option value="delta">delta vs first</option>
+              </select>
+              <select id="zoomXv">
+                <option value="auto" selected>auto-zoom</option>
+                <option value="full">full domain</option>
+              </select>
+              <div class="legend" id="legendXv">min -- / max --</div>
+            </div>
+          </div>
+          <canvas id="heatmapXv" width="480" height="360"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="plot-grid">
+        <div class="plot">
+          <div class="plot-header">
+            <div>
+              <h2>Energy Evolution</h2>
+              <p class="sub">Electric (ee), magnetic (me), kinetic (kin).</p>
+            </div>
+            <div class="legend" id="legendEnergy">ee / me / kin</div>
+          </div>
+          <canvas id="energyPlot" width="480" height="260"></canvas>
+        </div>
+        <div class="plot">
+          <div class="plot-header">
+            <div>
+              <h2>Conservation Error</h2>
+              <p class="sub">Relative error vs initial values.</p>
+            </div>
+            <div class="legend" id="legendError">mass / momentum / total energy</div>
+          </div>
+          <canvas id="errorPlot" width="480" height="260"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel log-panel">
+      <div class="plot-header">
+        <h2>Run Log</h2>
+        <p class="sub">Stdout/stderr from the WASM simulation.</p>
+      </div>
+      <pre id="log"></pre>
+    </section>
+
+    <footer class="footer">
+      <div>Tip: larger grids and higher rank increase runtime and memory.</div>
+    </footer>
+  </div>
+
+  <script src="alfven_wasm_embed.js?v=2026-02-12i"></script>
+  <script src="alfven_wasm.js?v=2026-02-12i"></script>
+  <script src="main.js?v=2026-02-12i"></script>
+</body>
+</html>
